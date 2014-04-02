@@ -57,10 +57,10 @@ public class GlobalOrdinalsBenchmark {
 
     private static final String INDEX_NAME = "index";
     private static final String TYPE_NAME = "type";
-    private static final int QUERY_WARMUP = 10;
+    private static final int QUERY_WARMUP = 25;
     private static final int QUERY_COUNT = 100;
-    private static final int FIELD_LIMIT = 1 << 22;
-    private static final int FIELD_START = 1;
+    private static final int FIELD_START = 1024;//1;
+    private static final int FIELD_LIMIT = 4096;//1 << 22;
 
     static long COUNT = SizeValue.parseSizeValue("5m").singles();
     static InternalNode node;

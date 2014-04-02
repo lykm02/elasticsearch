@@ -69,7 +69,7 @@ public class InternalGlobalOrdinalsBuilder extends AbstractIndexComponent implem
 
         FieldDataType fieldDataType = indexFieldData.getFieldDataType();
         int threshold = fieldDataType.getSettings().getAsInt(ORDINAL_MAPPING_THRESHOLD_KEY, 2048);
-        OrdinalMappingSource.Builder ordinalMappingBuilder = new DefaultOrdinalMappingSourceBuilder(
+        OrdinalMappingSourceBuilder ordinalMappingBuilder = new OrdinalMappingSourceBuilder(
                 indexReader.leaves().size(), acceptableOverheadRatio, threshold
         );
 
@@ -120,15 +120,6 @@ public class InternalGlobalOrdinalsBuilder extends AbstractIndexComponent implem
 
         Ordinals.Docs globalOrdinals(Ordinals.Docs segmentOrdinals);
 
-        interface Builder {
-
-            void onOrdinal(int readerIndex, long segmentOrdinal, long globalOrdinal);
-
-            OrdinalMappingSource[] build(long maxOrd);
-
-            long getMemorySizeInBytes();
-
-        }
     }
 
     private static abstract class GlobalOrdinalMapping implements Ordinals.Docs {
@@ -146,7 +137,7 @@ public class InternalGlobalOrdinalsBuilder extends AbstractIndexComponent implem
         }
 
         @Override
-        public Ordinals ordinals() {
+        public final Ordinals ordinals() {
             return new Ordinals() {
                 @Override
                 public long getMemorySizeInBytes() {
@@ -181,58 +172,92 @@ public class InternalGlobalOrdinalsBuilder extends AbstractIndexComponent implem
         }
 
         @Override
-        public int getNumDocs() {
+        public final int getNumDocs() {
             return segmentOrdinals.getNumDocs();
         }
 
         @Override
-        public long getNumOrds() {
+        public final long getNumOrds() {
             return maxOrd - Ordinals.MIN_ORDINAL;
         }
 
         @Override
-        public long getMaxOrd() {
+        public final long getMaxOrd() {
             return maxOrd;
         }
 
         @Override
-        public boolean isMultiValued() {
+        public final boolean isMultiValued() {
             return segmentOrdinals.isMultiValued();
         }
 
         @Override
-        public int setDocument(int docId) {
+        public final int setDocument(int docId) {
             return segmentOrdinals.setDocument(docId);
         }
 
         @Override
-        public long currentOrd() {
+        public final long currentOrd() {
             return currentGlobalOrd;
         }
 
+        @Override
+        public final long getOrd(int docId) {
+            long segmentOrd = segmentOrdinals.getOrd(docId);
+            return currentGlobalOrd = getGlobalOrd(segmentOrd);
+        }
+
+        @Override
+        public final LongsRef getOrds(int docId) {
+            LongsRef refs = segmentOrdinals.getOrds(docId);
+            for (int i = refs.offset; i < refs.length; i++) {
+                refs.longs[i] = getGlobalOrd(refs.longs[i]);
+            }
+            return refs;
+        }
+
+        @Override
+        public final long nextOrd() {
+            long segmentOrd = segmentOrdinals.nextOrd();
+            return currentGlobalOrd = getGlobalOrd(segmentOrd);
+        }
+
+        protected abstract long getGlobalOrd(long segmentOrd);
+
     }
 
-    private final static class DefaultOrdinalMappingSourceBuilder extends CompressedOrdinalMappingSource.Builder {
+    private final static class OrdinalMappingSourceBuilder {
 
-        final int numSegments;
+        final MonotonicAppendingLongBuffer[] segmentOrdToGlobalOrdDeltas;
         final float acceptableOverheadRatio;
+        final int numSegments;
         final int threshold;
 
-        private DefaultOrdinalMappingSourceBuilder(int numSegments, float acceptableOverheadRatio, int threshold) {
-            super(numSegments, acceptableOverheadRatio);
+        long memorySizeInBytesCounter;
+
+        private OrdinalMappingSourceBuilder(int numSegments, float acceptableOverheadRatio, int threshold) {
+            segmentOrdToGlobalOrdDeltas = new MonotonicAppendingLongBuffer[numSegments];
+            for (int i = 0; i < segmentOrdToGlobalOrdDeltas.length; i++) {
+                segmentOrdToGlobalOrdDeltas[i] = new MonotonicAppendingLongBuffer(acceptableOverheadRatio);
+                segmentOrdToGlobalOrdDeltas[i].add(0);
+            }
             this.numSegments = numSegments;
             this.acceptableOverheadRatio = acceptableOverheadRatio;
             this.threshold = threshold;
         }
 
-        @Override
+        public void onOrdinal(int readerIndex, long segmentOrdinal, long globalOrdinal) {
+            long delta = globalOrdinal - segmentOrdinal;
+            segmentOrdToGlobalOrdDeltas[readerIndex].add(delta);
+        }
+
         public OrdinalMappingSource[] build(long maxOrd) {
             // If we find out that there are less then predefined number of ordinals, it is better to put the the
             // segment ordinal to global ordinal mapping in a packed ints, since the amount values are small and
             // will most likely fit in the CPU caches and MonotonicAppendingLongBuffer's compression will just be
             // unnecessary.
 
-            if (maxOrd <= threshold && maxOrd <= Short.MAX_VALUE) {
+            if (maxOrd <= threshold) {
                 // Rebuilding from MonotonicAppendingLongBuffer to GrowableWriter is fast
                 GrowableWriter[] newSegmentOrdToGlobalOrdDeltas = new GrowableWriter[numSegments];
                 for (int i = 0; i < segmentOrdToGlobalOrdDeltas.length; i++) {
@@ -257,8 +282,20 @@ public class InternalGlobalOrdinalsBuilder extends AbstractIndexComponent implem
                 }
                 return sources;
             } else {
-                return super.build(maxOrd);
+                OrdinalMappingSource[] sources = new OrdinalMappingSource[segmentOrdToGlobalOrdDeltas.length];
+                for (int i = 0; i < segmentOrdToGlobalOrdDeltas.length; i++) {
+                    MonotonicAppendingLongBuffer segmentOrdToGlobalOrdLookup = segmentOrdToGlobalOrdDeltas[i];
+                    segmentOrdToGlobalOrdLookup.freeze();
+                    long ramUsed = segmentOrdToGlobalOrdLookup.ramBytesUsed();
+                    sources[i] = new CompressedOrdinalMappingSource(segmentOrdToGlobalOrdLookup, ramUsed, maxOrd);
+                    memorySizeInBytesCounter += ramUsed;
+                }
+                return sources;
             }
+        }
+
+        public long getMemorySizeInBytes() {
+            return memorySizeInBytesCounter;
         }
     }
 
@@ -289,145 +326,8 @@ public class InternalGlobalOrdinalsBuilder extends AbstractIndexComponent implem
             }
 
             @Override
-            public long getOrd(int docId) {
-                long segmentOrd = segmentOrdinals.getOrd(docId);
-                return currentGlobalOrd = segmentOrd + segmentOrdToGlobalOrdLookup.get(segmentOrd);
-            }
-
-            @Override
-            public LongsRef getOrds(int docId) {
-                LongsRef refs = segmentOrdinals.getOrds(docId);
-                for (int i = refs.offset; i < refs.length; i++) {
-                    refs.longs[i] = refs.longs[i] + segmentOrdToGlobalOrdLookup.get(refs.longs[i]);
-                }
-                return refs;
-            }
-
-            @Override
-            public long nextOrd() {
-                long segmentOrd = segmentOrdinals.nextOrd();
-                return currentGlobalOrd = segmentOrd + segmentOrdToGlobalOrdLookup.get(segmentOrd);
-            }
-        }
-
-        private static class Builder implements OrdinalMappingSource.Builder {
-
-            final MonotonicAppendingLongBuffer[] segmentOrdToGlobalOrdDeltas;
-            long memorySizeInBytesCounter;
-
-            private Builder(int numSegments, float acceptableOverheadRatio) {
-                segmentOrdToGlobalOrdDeltas = new MonotonicAppendingLongBuffer[numSegments];
-                for (int i = 0; i < segmentOrdToGlobalOrdDeltas.length; i++) {
-                    segmentOrdToGlobalOrdDeltas[i] = new MonotonicAppendingLongBuffer(acceptableOverheadRatio);
-                    segmentOrdToGlobalOrdDeltas[i].add(0);
-                }
-            }
-
-            public void onOrdinal(int readerIndex, long segmentOrdinal, long globalOrdinal) {
-                long delta = globalOrdinal - segmentOrdinal;
-                segmentOrdToGlobalOrdDeltas[readerIndex].add(delta);
-            }
-
-            public OrdinalMappingSource[] build(long maxOrd) {
-                OrdinalMappingSource[] sources = new OrdinalMappingSource[segmentOrdToGlobalOrdDeltas.length];
-                for (int i = 0; i < segmentOrdToGlobalOrdDeltas.length; i++) {
-                    MonotonicAppendingLongBuffer segmentOrdToGlobalOrdLookup = segmentOrdToGlobalOrdDeltas[i];
-                    segmentOrdToGlobalOrdLookup.freeze();
-                    long ramUsed = segmentOrdToGlobalOrdLookup.ramBytesUsed();
-                    sources[i] = new CompressedOrdinalMappingSource(segmentOrdToGlobalOrdLookup, ramUsed, maxOrd);
-                    memorySizeInBytesCounter += ramUsed;
-                }
-                return sources;
-            }
-
-            public long getMemorySizeInBytes() {
-                return memorySizeInBytesCounter;
-            }
-        }
-
-    }
-
-    private static final class PlainArrayOrdinalMappingSource implements OrdinalMappingSource {
-
-        private final short[] segmentOrdToGlobalOrdLookup;
-        private final long memorySizeInBytes;
-        private final long maxOrd;
-
-        private PlainArrayOrdinalMappingSource(short[] segmentOrdToGlobalOrdLookup, long memorySizeInBytes, long maxOrd) {
-            this.segmentOrdToGlobalOrdLookup = segmentOrdToGlobalOrdLookup;
-            this.memorySizeInBytes = memorySizeInBytes;
-            this.maxOrd = maxOrd;
-        }
-
-        @Override
-        public Ordinals.Docs globalOrdinals(Ordinals.Docs segmentOrdinals) {
-            return new GlobalOrdinalsDocs(segmentOrdinals, memorySizeInBytes, maxOrd, segmentOrdToGlobalOrdLookup);
-        }
-
-        private final static class GlobalOrdinalsDocs extends GlobalOrdinalMapping {
-
-            private final short[] segmentOrdToGlobalOrdLookup;
-
-            private GlobalOrdinalsDocs(Ordinals.Docs segmentOrdinals, long memorySizeInBytes, long maxOrd, short[] segmentOrdToGlobalOrdLookup) {
-                super(segmentOrdinals, memorySizeInBytes, maxOrd);
-                this.segmentOrdToGlobalOrdLookup = segmentOrdToGlobalOrdLookup;
-            }
-
-            @Override
-            public long getOrd(int docId) {
-                long segmentOrd = segmentOrdinals.getOrd(docId);
-                return currentGlobalOrd = segmentOrdToGlobalOrdLookup[((int) segmentOrd)];
-            }
-
-            @Override
-            public LongsRef getOrds(int docId) {
-                LongsRef refs = segmentOrdinals.getOrds(docId);
-                for (int i = refs.offset; i < refs.length; i++) {
-                    refs.longs[i] = segmentOrdToGlobalOrdLookup[((int) refs.longs[i])];
-                }
-                return refs;
-            }
-
-            @Override
-            public long nextOrd() {
-                long segmentOrd = segmentOrdinals.nextOrd();
-                return currentGlobalOrd = segmentOrdToGlobalOrdLookup[((int) segmentOrd)];
-            }
-        }
-
-        private static final class Builder implements OrdinalMappingSource.Builder {
-
-            final short[][] segmentOrdToGlobalOrdLookups;
-            final int[] segmentOrdToGlobalOrdLookupsCounter;
-            long memorySizeInBytesCounter;
-
-            private Builder(int numSegments) {
-                segmentOrdToGlobalOrdLookups = new short[numSegments][];
-                segmentOrdToGlobalOrdLookupsCounter = new int[numSegments];
-                for (int i = 0; i < segmentOrdToGlobalOrdLookups.length; i++) {
-                    segmentOrdToGlobalOrdLookups[i] = new short[32];
-                    segmentOrdToGlobalOrdLookupsCounter[i] = 1;
-                }
-            }
-
-            public void onOrdinal(int readerIndex, long segmentOrdinal, long globalOrdinal) {
-                segmentOrdToGlobalOrdLookups[readerIndex] = ArrayUtil.grow(segmentOrdToGlobalOrdLookups[readerIndex], segmentOrdToGlobalOrdLookupsCounter[readerIndex] + 1);
-                segmentOrdToGlobalOrdLookups[readerIndex][segmentOrdToGlobalOrdLookupsCounter[readerIndex]++] = (short) globalOrdinal;
-            }
-
-            public OrdinalMappingSource[] build(long maxOrd) {
-                OrdinalMappingSource[] result = new OrdinalMappingSource[segmentOrdToGlobalOrdLookupsCounter.length];
-                for (int i = 0; i < segmentOrdToGlobalOrdLookups.length; i++) {
-                    final short[] segmentOrdToGlobalOrdLookup = segmentOrdToGlobalOrdLookups[i];
-                    long ramUsed = (segmentOrdToGlobalOrdLookup.length * RamUsageEstimator.NUM_BYTES_SHORT) + RamUsageEstimator.NUM_BYTES_ARRAY_HEADER;
-                    result[i] = new PlainArrayOrdinalMappingSource(segmentOrdToGlobalOrdLookup, ramUsed, maxOrd);
-                    memorySizeInBytesCounter += ramUsed;
-                }
-                return result;
-            }
-
-            public long getMemorySizeInBytes() {
-                return memorySizeInBytesCounter;
+            protected long getGlobalOrd(long segmentOrd) {
+                return segmentOrd + segmentOrdToGlobalOrdLookup.get(segmentOrd);
             }
         }
 
@@ -460,65 +360,8 @@ public class InternalGlobalOrdinalsBuilder extends AbstractIndexComponent implem
             }
 
             @Override
-            public long getOrd(int docId) {
-                long segmentOrd = segmentOrdinals.getOrd(docId);
-                return currentGlobalOrd = segmentOrd + segmentOrdToGlobalOrdLookup.get((int) segmentOrd);
-            }
-
-            @Override
-            public LongsRef getOrds(int docId) {
-                LongsRef refs = segmentOrdinals.getOrds(docId);
-                for (int i = refs.offset; i < refs.length; i++) {
-                    refs.longs[i] = refs.longs[i] + segmentOrdToGlobalOrdLookup.get((int) refs.longs[i]);
-                }
-                return refs;
-            }
-
-            @Override
-            public long nextOrd() {
-                long segmentOrd = segmentOrdinals.nextOrd();
-                return currentGlobalOrd = segmentOrd + segmentOrdToGlobalOrdLookup.get((int) segmentOrd);
-            }
-        }
-
-        private static final class Builder implements OrdinalMappingSource.Builder {
-
-            final GrowableWriter[] segmentOrdToGlobalOrdLookups;
-            final int[] segmentOrdToGlobalOrdLookupsCounter;
-            long memorySizeInBytesCounter;
-
-            private Builder(int numSegments, float acceptableOverheadRatio) {
-                segmentOrdToGlobalOrdLookups = new GrowableWriter[numSegments];
-                segmentOrdToGlobalOrdLookupsCounter = new int[numSegments];
-                for (int i = 0; i < segmentOrdToGlobalOrdLookups.length; i++) {
-                    segmentOrdToGlobalOrdLookups[i] = new GrowableWriter(1, 32, acceptableOverheadRatio);
-                    segmentOrdToGlobalOrdLookupsCounter[i] = 1;
-                }
-            }
-
-            public void onOrdinal(int readerIndex, long segmentOrdinal, long globalOrdinal) {
-                if (segmentOrdToGlobalOrdLookups[readerIndex].size() < segmentOrdToGlobalOrdLookupsCounter[readerIndex] + 1) {
-                    segmentOrdToGlobalOrdLookups[readerIndex] = segmentOrdToGlobalOrdLookups[readerIndex].resize(
-                            ArrayUtil.oversize(segmentOrdToGlobalOrdLookupsCounter[readerIndex] + 1, RamUsageEstimator.NUM_BYTES_LONG)
-                    );
-                }
-                long delta = globalOrdinal - segmentOrdinal;
-                segmentOrdToGlobalOrdLookups[readerIndex].set(segmentOrdToGlobalOrdLookupsCounter[readerIndex]++, delta);
-            }
-
-            public OrdinalMappingSource[] build(long maxOrd) {
-                OrdinalMappingSource[] result = new OrdinalMappingSource[segmentOrdToGlobalOrdLookupsCounter.length];
-                for (int i = 0; i < segmentOrdToGlobalOrdLookups.length; i++) {
-                    final PackedInts.Mutable segmentOrdToGlobalOrdLookup = segmentOrdToGlobalOrdLookups[i].getMutable();
-                    long ramUsed = segmentOrdToGlobalOrdLookup.ramBytesUsed();
-                    result[i] = new PackedIntOrdinalMappingSource(segmentOrdToGlobalOrdLookup, ramUsed, maxOrd);
-                    memorySizeInBytesCounter += ramUsed;
-                }
-                return result;
-            }
-
-            public long getMemorySizeInBytes() {
-                return memorySizeInBytesCounter;
+            protected long getGlobalOrd(long segmentOrd) {
+                return segmentOrd + segmentOrdToGlobalOrdLookup.get((int) segmentOrd);
             }
         }
 
