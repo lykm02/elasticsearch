@@ -39,12 +39,14 @@ import static org.elasticsearch.index.fielddata.ordinals.InternalGlobalOrdinalsB
 public final class GlobalOrdinalsIndexFieldData extends AbstractIndexComponent implements IndexFieldData.WithOrdinals, RamUsage {
 
     private final FieldMapper.Names fieldNames;
+    private final FieldDataType fieldDataType;
     private final Atomic[] atomicReaders;
     private final long memorySizeInBytes;
 
-    public GlobalOrdinalsIndexFieldData(Index index, Settings settings, FieldMapper.Names fieldNames, AtomicFieldData.WithOrdinals[] segmentAfd, LongValues globalOrdToFirstSegment, LongValues globalOrdToFirstSegmentDelta, OrdinalMappingSource[] segmentOrdToGlobalOrds, long memorySizeInBytes) {
+    public GlobalOrdinalsIndexFieldData(Index index, Settings settings, FieldMapper.Names fieldNames, FieldDataType fieldDataType, AtomicFieldData.WithOrdinals[] segmentAfd, LongValues globalOrdToFirstSegment, LongValues globalOrdToFirstSegmentDelta, OrdinalMappingSource[] segmentOrdToGlobalOrds, long memorySizeInBytes) {
         super(index, settings);
         this.fieldNames = fieldNames;
+        this.fieldDataType = fieldDataType;
         this.atomicReaders = new Atomic[segmentAfd.length];
         for (int i = 0; i < segmentAfd.length; i++) {
             atomicReaders[i] = new Atomic(segmentAfd[i], globalOrdToFirstSegment, globalOrdToFirstSegmentDelta, segmentOrdToGlobalOrds[i]);
@@ -75,6 +77,11 @@ public final class GlobalOrdinalsIndexFieldData extends AbstractIndexComponent i
     @Override
     public FieldMapper.Names getFieldNames() {
         return fieldNames;
+    }
+
+    @Override
+    public FieldDataType getFieldDataType() {
+        return fieldDataType;
     }
 
     @Override

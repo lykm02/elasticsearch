@@ -47,6 +47,11 @@ public class NoOrdinalsStringFieldDataTests extends PagedBytesStringFieldDataTes
             }
 
             @Override
+            public FieldDataType getFieldDataType() {
+                return in.getFieldDataType();
+            }
+
+            @Override
             public boolean valuesOrdered() {
                 return in.valuesOrdered();
             }

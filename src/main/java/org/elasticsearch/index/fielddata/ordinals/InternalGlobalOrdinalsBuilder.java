@@ -28,12 +28,12 @@ import org.apache.lucene.util.packed.AppendingPackedLongBuffer;
 import org.apache.lucene.util.packed.GrowableWriter;
 import org.apache.lucene.util.packed.MonotonicAppendingLongBuffer;
 import org.apache.lucene.util.packed.PackedInts;
-import org.elasticsearch.ElasticsearchIllegalArgumentException;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.index.AbstractIndexComponent;
 import org.elasticsearch.index.Index;
 import org.elasticsearch.index.fielddata.AtomicFieldData;
 import org.elasticsearch.index.fielddata.BytesValues;
+import org.elasticsearch.index.fielddata.FieldDataType;
 import org.elasticsearch.index.fielddata.IndexFieldData;
 import org.elasticsearch.index.settings.IndexSettings;
 import org.elasticsearch.indices.fielddata.breaker.CircuitBreakerService;
@@ -47,8 +47,7 @@ import java.util.List;
  */
 public class InternalGlobalOrdinalsBuilder extends AbstractIndexComponent implements GlobalOrdinalsBuilder {
 
-    public final static String ORDINAL_MAPPING_OPTION_KEY = "index.fielddata.ordinals.ordinal_mapping_type";
-    public final static String[] ORDINAL_MAPPING_IMPLS = new String[]{"plain", "packed_int", "compressed", "default"};
+    public final static String ORDINAL_MAPPING_THRESHOLD_KEY = "threshold";
 
     public InternalGlobalOrdinalsBuilder(Index index, @IndexSettings Settings indexSettings) {
         super(index, indexSettings);
@@ -68,8 +67,10 @@ public class InternalGlobalOrdinalsBuilder extends AbstractIndexComponent implem
         final MonotonicAppendingLongBuffer globalOrdToFirstSegmentDelta = new MonotonicAppendingLongBuffer(PackedInts.COMPACT);
         globalOrdToFirstSegmentDelta.add(0);
 
-        OrdinalMappingSource.Builder ordinalMappingBuilder = resolveOrdinalMappingSourceBuilder(
-                settings, acceptableOverheadRatio, indexReader.leaves().size()
+        FieldDataType fieldDataType = indexFieldData.getFieldDataType();
+        int threshold = fieldDataType.getSettings().getAsInt(ORDINAL_MAPPING_THRESHOLD_KEY, 2048);
+        OrdinalMappingSource.Builder ordinalMappingBuilder = new DefaultOrdinalMappingSourceBuilder(
+                indexReader.leaves().size(), acceptableOverheadRatio, threshold
         );
 
         long currentGlobalOrdinal = 0;
@@ -109,24 +110,10 @@ public class InternalGlobalOrdinalsBuilder extends AbstractIndexComponent implem
                     (System.currentTimeMillis() - startTime)
             );
         }
-        return new GlobalOrdinalsIndexFieldData(indexFieldData.index(), settings, indexFieldData.getFieldNames(), withOrdinals,
-                globalOrdToFirstSegment, globalOrdToFirstSegmentDelta, segmentOrdToGlobalOrdLookups, memorySizeInBytes
+        return new GlobalOrdinalsIndexFieldData(indexFieldData.index(), settings, indexFieldData.getFieldNames(),
+                fieldDataType, withOrdinals, globalOrdToFirstSegment, globalOrdToFirstSegmentDelta,
+                segmentOrdToGlobalOrdLookups, memorySizeInBytes
         );
-    }
-
-    private OrdinalMappingSource.Builder resolveOrdinalMappingSourceBuilder(Settings settings, float acceptableOverheadRatio, int numSegments) {
-        String ordinalMappingType = settings.get(ORDINAL_MAPPING_OPTION_KEY, "default");
-        if ("default".equals(ordinalMappingType)) {
-            return new DefaultOrdinalMappingSourceBuilder(numSegments, acceptableOverheadRatio);
-        } else if ("compressed".equals(ordinalMappingType)) {
-            return new CompressedOrdinalMappingSource.Builder(numSegments, acceptableOverheadRatio);
-        } else if ("plain".equals(ordinalMappingType)) {
-            return new PlainArrayOrdinalMappingSource.Builder(numSegments);
-        } else if ("packed_int".equals(ordinalMappingType)) {
-            return new PackedIntOrdinalMappingSource.Builder(numSegments, acceptableOverheadRatio);
-        } else {
-            throw new ElasticsearchIllegalArgumentException("Unsupported ordinal mapping type " + ordinalMappingType);
-        }
     }
 
     public interface OrdinalMappingSource {
@@ -229,22 +216,23 @@ public class InternalGlobalOrdinalsBuilder extends AbstractIndexComponent implem
 
         final int numSegments;
         final float acceptableOverheadRatio;
+        final int threshold;
 
-        private DefaultOrdinalMappingSourceBuilder(int numSegments, float acceptableOverheadRatio) {
+        private DefaultOrdinalMappingSourceBuilder(int numSegments, float acceptableOverheadRatio, int threshold) {
             super(numSegments, acceptableOverheadRatio);
             this.numSegments = numSegments;
             this.acceptableOverheadRatio = acceptableOverheadRatio;
+            this.threshold = threshold;
         }
 
         @Override
         public OrdinalMappingSource[] build(long maxOrd) {
             // If we find out that there are less then predefined number of ordinals, it is better to put the the
             // segment ordinal to global ordinal mapping in a packed ints, since the amount values are small and
-            // will most likely fit in L1 CPU cache and MonotonicAppendingLongBuffer's compression will just be unnecessary.
+            // will most likely fit in the CPU caches and MonotonicAppendingLongBuffer's compression will just be
+            // unnecessary.
 
-            // Estimation: On average each global ordinal delta will take 1 byte. 4kb of global ordinals is likely
-            // to fit in the L1 CPU cache.
-            if (maxOrd <= 4096) {
+            if (maxOrd <= threshold && maxOrd <= Short.MAX_VALUE) {
                 // Rebuilding from MonotonicAppendingLongBuffer to GrowableWriter is fast
                 GrowableWriter[] newSegmentOrdToGlobalOrdDeltas = new GrowableWriter[numSegments];
                 for (int i = 0; i < segmentOrdToGlobalOrdDeltas.length; i++) {
@@ -361,11 +349,11 @@ public class InternalGlobalOrdinalsBuilder extends AbstractIndexComponent implem
 
     private static final class PlainArrayOrdinalMappingSource implements OrdinalMappingSource {
 
-        private final long[] segmentOrdToGlobalOrdLookup;
+        private final short[] segmentOrdToGlobalOrdLookup;
         private final long memorySizeInBytes;
         private final long maxOrd;
 
-        private PlainArrayOrdinalMappingSource(long[] segmentOrdToGlobalOrdLookup, long memorySizeInBytes, long maxOrd) {
+        private PlainArrayOrdinalMappingSource(short[] segmentOrdToGlobalOrdLookup, long memorySizeInBytes, long maxOrd) {
             this.segmentOrdToGlobalOrdLookup = segmentOrdToGlobalOrdLookup;
             this.memorySizeInBytes = memorySizeInBytes;
             this.maxOrd = maxOrd;
@@ -378,9 +366,9 @@ public class InternalGlobalOrdinalsBuilder extends AbstractIndexComponent implem
 
         private final static class GlobalOrdinalsDocs extends GlobalOrdinalMapping {
 
-            private final long[] segmentOrdToGlobalOrdLookup;
+            private final short[] segmentOrdToGlobalOrdLookup;
 
-            private GlobalOrdinalsDocs(Ordinals.Docs segmentOrdinals, long memorySizeInBytes, long maxOrd, long[] segmentOrdToGlobalOrdLookup) {
+            private GlobalOrdinalsDocs(Ordinals.Docs segmentOrdinals, long memorySizeInBytes, long maxOrd, short[] segmentOrdToGlobalOrdLookup) {
                 super(segmentOrdinals, memorySizeInBytes, maxOrd);
                 this.segmentOrdToGlobalOrdLookup = segmentOrdToGlobalOrdLookup;
             }
@@ -409,29 +397,29 @@ public class InternalGlobalOrdinalsBuilder extends AbstractIndexComponent implem
 
         private static final class Builder implements OrdinalMappingSource.Builder {
 
-            final long[][] segmentOrdToGlobalOrdLookups;
+            final short[][] segmentOrdToGlobalOrdLookups;
             final int[] segmentOrdToGlobalOrdLookupsCounter;
             long memorySizeInBytesCounter;
 
             private Builder(int numSegments) {
-                segmentOrdToGlobalOrdLookups = new long[numSegments][];
+                segmentOrdToGlobalOrdLookups = new short[numSegments][];
                 segmentOrdToGlobalOrdLookupsCounter = new int[numSegments];
                 for (int i = 0; i < segmentOrdToGlobalOrdLookups.length; i++) {
-                    segmentOrdToGlobalOrdLookups[i] = new long[32];
+                    segmentOrdToGlobalOrdLookups[i] = new short[32];
                     segmentOrdToGlobalOrdLookupsCounter[i] = 1;
                 }
             }
 
             public void onOrdinal(int readerIndex, long segmentOrdinal, long globalOrdinal) {
                 segmentOrdToGlobalOrdLookups[readerIndex] = ArrayUtil.grow(segmentOrdToGlobalOrdLookups[readerIndex], segmentOrdToGlobalOrdLookupsCounter[readerIndex] + 1);
-                segmentOrdToGlobalOrdLookups[readerIndex][segmentOrdToGlobalOrdLookupsCounter[readerIndex]++] = globalOrdinal;
+                segmentOrdToGlobalOrdLookups[readerIndex][segmentOrdToGlobalOrdLookupsCounter[readerIndex]++] = (short) globalOrdinal;
             }
 
             public OrdinalMappingSource[] build(long maxOrd) {
                 OrdinalMappingSource[] result = new OrdinalMappingSource[segmentOrdToGlobalOrdLookupsCounter.length];
                 for (int i = 0; i < segmentOrdToGlobalOrdLookups.length; i++) {
-                    final long[] segmentOrdToGlobalOrdLookup = segmentOrdToGlobalOrdLookups[i];
-                    long ramUsed = (segmentOrdToGlobalOrdLookup.length * RamUsageEstimator.NUM_BYTES_LONG) + RamUsageEstimator.NUM_BYTES_ARRAY_HEADER;
+                    final short[] segmentOrdToGlobalOrdLookup = segmentOrdToGlobalOrdLookups[i];
+                    long ramUsed = (segmentOrdToGlobalOrdLookup.length * RamUsageEstimator.NUM_BYTES_SHORT) + RamUsageEstimator.NUM_BYTES_ARRAY_HEADER;
                     result[i] = new PlainArrayOrdinalMappingSource(segmentOrdToGlobalOrdLookup, ramUsed, maxOrd);
                     memorySizeInBytesCounter += ramUsed;
                 }

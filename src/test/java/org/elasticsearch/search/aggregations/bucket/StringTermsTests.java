@@ -22,7 +22,6 @@ import com.google.common.base.Strings;
 import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.action.index.IndexRequestBuilder;
 import org.elasticsearch.action.search.SearchResponse;
-import org.elasticsearch.common.settings.ImmutableSettings;
 import org.elasticsearch.index.fielddata.ordinals.InternalGlobalOrdinalsBuilder;
 import org.elasticsearch.index.query.FilterBuilders;
 import org.elasticsearch.search.aggregations.bucket.filter.Filter;
@@ -67,9 +66,21 @@ public class StringTermsTests extends ElasticsearchIntegrationTest {
 
     @Before
     public void init() throws Exception {
-        String[] ordinalMappingTypes = InternalGlobalOrdinalsBuilder.ORDINAL_MAPPING_IMPLS;
         prepareCreate("idx")
-                .setSettings(ImmutableSettings.builder().put(InternalGlobalOrdinalsBuilder.ORDINAL_MAPPING_OPTION_KEY, ordinalMappingTypes[randomInt(ordinalMappingTypes.length - 1)]))
+                .addMapping("_default_", jsonBuilder().startObject().startObject("type").startObject("_properties")
+                    .startObject(SINGLE_VALUED_FIELD_NAME)
+                        .field("type", "string")
+                        .startObject("fielddata")
+                            .field(InternalGlobalOrdinalsBuilder.ORDINAL_MAPPING_THRESHOLD_KEY, randomIntBetween(1, 100))
+                        .endObject()
+                    .endObject()
+                    .startObject(MULTI_VALUED_FIELD_NAME)
+                        .field("type", "string")
+                        .startObject("fielddata")
+                            .field(InternalGlobalOrdinalsBuilder.ORDINAL_MAPPING_THRESHOLD_KEY, randomIntBetween(1, 100))
+                        .endObject()
+                    .endObject()
+                .endObject().endObject().endObject())
                 .get();
         IndexRequestBuilder[] lowCardBuilders = new IndexRequestBuilder[5]; // TODO randomize the size?
         for (int i = 0; i < lowCardBuilders.length; i++) {

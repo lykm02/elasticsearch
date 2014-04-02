@@ -25,7 +25,6 @@ import org.elasticsearch.action.bulk.BulkResponse;
 import org.elasticsearch.action.search.SearchRequestBuilder;
 import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.action.support.IndicesOptions;
-import org.elasticsearch.common.settings.ImmutableSettings;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.index.fielddata.ordinals.InternalGlobalOrdinalsBuilder;
 import org.elasticsearch.index.query.FilterBuilders;
@@ -147,17 +146,18 @@ public class RandomTests extends ElasticsearchIntegrationTest {
         final int numDocs = scaledRandomIntBetween(10000, 20000);
         final int maxNumTerms = randomIntBetween(10, 100000);
 
-        String[] ordinalMappingTypes = InternalGlobalOrdinalsBuilder.ORDINAL_MAPPING_IMPLS;
         final IntOpenHashSet valuesSet = new IntOpenHashSet();
         cluster().wipeIndices("idx");
         prepareCreate("idx")
-              .setSettings(ImmutableSettings.builder().put(InternalGlobalOrdinalsBuilder.ORDINAL_MAPPING_OPTION_KEY, ordinalMappingTypes[randomInt(ordinalMappingTypes.length - 1)]))
               .addMapping("type", jsonBuilder().startObject()
                       .startObject("type")
                       .startObject("properties")
                       .startObject("string_values")
                       .field("type", "string")
                       .field("index", "not_analyzed")
+                      .startObject("fielddata")
+                        .field(InternalGlobalOrdinalsBuilder.ORDINAL_MAPPING_THRESHOLD_KEY, randomIntBetween(1, maxNumTerms))
+                      .endObject()
                       .endObject()
                       .startObject("long_values")
                       .field("type", "long")

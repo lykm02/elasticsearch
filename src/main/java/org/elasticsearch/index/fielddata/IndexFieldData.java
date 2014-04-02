@@ -58,6 +58,11 @@ public interface IndexFieldData<FD extends AtomicFieldData> extends IndexCompone
     FieldMapper.Names getFieldNames();
 
     /**
+     * The field data type.
+     */
+    FieldDataType getFieldDataType();
+
+    /**
      * Are the values ordered? (in ascending manner).
      */
     boolean valuesOrdered();

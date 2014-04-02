@@ -37,8 +37,8 @@ import java.io.IOException;
 
 public class GeoPointBinaryDVIndexFieldData extends DocValuesIndexFieldData implements IndexGeoPointFieldData<AtomicGeoPointFieldData<ScriptDocValues>> {
 
-    public GeoPointBinaryDVIndexFieldData(Index index, Names fieldNames) {
-        super(index, fieldNames);
+    public GeoPointBinaryDVIndexFieldData(Index index, Names fieldNames, FieldDataType fieldDataType) {
+        super(index, fieldNames, fieldDataType);
     }
 
     @Override
@@ -72,7 +72,7 @@ public class GeoPointBinaryDVIndexFieldData extends DocValuesIndexFieldData impl
                                        CircuitBreakerService breakerService, MapperService mapperService, GlobalOrdinalsBuilder globalOrdinalBuilder) {
             // Ignore breaker
             final FieldMapper.Names fieldNames = mapper.names();
-            return new GeoPointBinaryDVIndexFieldData(index, fieldNames);
+            return new GeoPointBinaryDVIndexFieldData(index, fieldNames, mapper.fieldDataType());
         }
 
     }

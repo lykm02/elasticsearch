@@ -24,6 +24,7 @@ import org.apache.lucene.index.IndexReader;
 import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.index.Index;
+import org.elasticsearch.index.fielddata.FieldDataType;
 import org.elasticsearch.index.fielddata.IndexFieldData;
 import org.elasticsearch.index.fielddata.IndexFieldDataCache;
 import org.elasticsearch.index.fielddata.fieldcomparator.BytesRefFieldComparatorSource;
@@ -39,8 +40,8 @@ public class SortedSetDVBytesIndexFieldData extends DocValuesIndexFieldData impl
     private final GlobalOrdinalsBuilder globalOrdinalsBuilder;
     private final CircuitBreakerService breakerService;
 
-    public SortedSetDVBytesIndexFieldData(Index index, IndexFieldDataCache cache, Settings indexSettings, Names fieldNames, GlobalOrdinalsBuilder globalOrdinalBuilder, CircuitBreakerService breakerService) {
-        super(index, fieldNames);
+    public SortedSetDVBytesIndexFieldData(Index index, IndexFieldDataCache cache, Settings indexSettings, Names fieldNames, GlobalOrdinalsBuilder globalOrdinalBuilder, CircuitBreakerService breakerService, FieldDataType fieldDataType) {
+        super(index, fieldNames, fieldDataType);
         this.indexSettings = indexSettings;
         this.cache = cache;
         this.globalOrdinalsBuilder = globalOrdinalBuilder;

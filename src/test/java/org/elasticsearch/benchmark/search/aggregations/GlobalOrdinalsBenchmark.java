@@ -28,11 +28,11 @@ import org.elasticsearch.action.search.SearchType;
 import org.elasticsearch.benchmark.search.aggregations.TermsAggregationSearchBenchmark.StatsResult;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.common.jna.Natives;
-import org.elasticsearch.common.settings.ImmutableSettings;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.common.unit.SizeValue;
 import org.elasticsearch.common.unit.TimeValue;
+import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.discovery.Discovery;
 import org.elasticsearch.index.fielddata.ordinals.InternalGlobalOrdinalsBuilder;
 import org.elasticsearch.indices.IndexAlreadyExistsException;
@@ -40,6 +40,7 @@ import org.elasticsearch.node.internal.InternalNode;
 import org.elasticsearch.search.aggregations.AggregationBuilders;
 import org.elasticsearch.transport.TransportModule;
 
+import java.io.IOException;
 import java.util.*;
 
 import static org.elasticsearch.cluster.metadata.IndexMetaData.SETTING_NUMBER_OF_REPLICAS;
@@ -57,9 +58,9 @@ public class GlobalOrdinalsBenchmark {
     private static final String INDEX_NAME = "index";
     private static final String TYPE_NAME = "type";
     private static final int QUERY_WARMUP = 10;
-    private static final int QUERY_COUNT = 200;
-    private static final int FIELD_LIMIT = 256;//1 << 22;
-    private static final int FIELD_START = 1;//1;
+    private static final int QUERY_COUNT = 100;
+    private static final int FIELD_LIMIT = 1 << 22;
+    private static final int FIELD_START = 1;
 
     static long COUNT = SizeValue.parseSizeValue("5m").singles();
     static InternalNode node;
@@ -152,21 +153,13 @@ public class GlobalOrdinalsBenchmark {
         System.out.println("--> Number of docs in index: " + COUNT);
 
         List<StatsResult> stats = new ArrayList<>();
-        String[] ordinalMappingTypes = new String[]{"default", "plain"/*, "packed_int", "sliced", "packed_long", "compressed"*/};
-        for (String ordinalMappingType : ordinalMappingTypes) {
-            client.admin().indices().prepareClose(INDEX_NAME).get();
-            client.admin().indices().prepareUpdateSettings(INDEX_NAME)
-                    .setSettings(ImmutableSettings.builder().put(InternalGlobalOrdinalsBuilder.ORDINAL_MAPPING_OPTION_KEY, ordinalMappingType))
-                    .get();
-            client.admin().indices().prepareOpen(INDEX_NAME).get();
-            ClusterHealthResponse clusterHealthResponse = client.admin().cluster().prepareHealth().setWaitForGreenStatus().setTimeout("10m").execute().actionGet();
-            if (clusterHealthResponse.isTimedOut()) {
-                System.err.println("--> Timed out waiting for cluster health");
-            }
+        int[] thresholds = new int[]{2048};
+        for (int threshold : thresholds) {
+            updateThresholdInMapping(threshold);
 
             for (int fieldSuffix = FIELD_START; fieldSuffix <= FIELD_LIMIT; fieldSuffix <<= 1) {
                 String fieldName = "field_" + fieldSuffix;
-                String name = ordinalMappingType + "-" + fieldName;
+                String name = threshold + "-" + fieldName;
                 stats.add(terms(name, fieldName, "global_ordinals_direct"));
             }
         }
@@ -186,6 +179,21 @@ public class GlobalOrdinalsBenchmark {
 
         client.close();
         node.close();
+    }
+
+    private static void updateThresholdInMapping(int threshold) throws IOException {
+        XContentBuilder builder = jsonBuilder().startObject().startObject(TYPE_NAME).startObject("_properties");
+        for (int fieldSuffix = FIELD_START; fieldSuffix <= FIELD_LIMIT; fieldSuffix <<= 1) {
+            builder.startObject("field_" + fieldSuffix)
+                    .field("type", "string")
+                    .startObject("fielddata")
+                        .field(InternalGlobalOrdinalsBuilder.ORDINAL_MAPPING_THRESHOLD_KEY, threshold)
+                    .endObject()
+            .endObject();
+        }
+        builder = builder.endObject().endObject().endObject();
+
+        client.admin().indices().preparePutMapping(INDEX_NAME).setType(TYPE_NAME).setSource(builder).get();
     }
 
     private static StatsResult terms(String name, String field, String executionHint) {

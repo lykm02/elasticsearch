@@ -24,6 +24,7 @@ import org.apache.lucene.index.IndexReader;
 import org.elasticsearch.ElasticsearchIllegalArgumentException;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.index.Index;
+import org.elasticsearch.index.fielddata.FieldDataType;
 import org.elasticsearch.index.fielddata.IndexFieldData;
 import org.elasticsearch.index.fielddata.IndexFieldDataCache;
 import org.elasticsearch.index.fielddata.IndexNumericFieldData.NumericType;
@@ -44,15 +45,21 @@ public abstract class DocValuesIndexFieldData {
 
     protected final Index index;
     protected final Names fieldNames;
+    protected final FieldDataType fieldDataType;
 
-    public DocValuesIndexFieldData(Index index, Names fieldNames) {
+    public DocValuesIndexFieldData(Index index, Names fieldNames, FieldDataType fieldDataType) {
         super();
         this.index = index;
         this.fieldNames = fieldNames;
+        this.fieldDataType = fieldDataType;
     }
 
     public final Names getFieldNames() {
         return fieldNames;
+    }
+
+    public final FieldDataType getFieldDataType() {
+        return fieldDataType;
     }
 
     public final void clear() {
@@ -93,14 +100,14 @@ public abstract class DocValuesIndexFieldData {
 
             if (BINARY_INDEX_FIELD_NAMES.contains(fieldNames.indexName())) {
                 assert numericType == null;
-                return new BinaryDVIndexFieldData(index, fieldNames);
+                return new BinaryDVIndexFieldData(index, fieldNames, mapper.fieldDataType());
             } else if (NUMERIC_INDEX_FIELD_NAMES.contains(fieldNames.indexName())) {
                 assert !numericType.isFloatingPoint();
-                return new NumericDVIndexFieldData(index, fieldNames);
+                return new NumericDVIndexFieldData(index, fieldNames, mapper.fieldDataType());
             } else if (numericType != null) {
-                return new BinaryDVNumericIndexFieldData(index, fieldNames, numericType);
+                return new BinaryDVNumericIndexFieldData(index, fieldNames, numericType, mapper.fieldDataType());
             } else {
-                return new SortedSetDVBytesIndexFieldData(index, cache, indexSettings, fieldNames, globalOrdinalBuilder,breakerService);
+                return new SortedSetDVBytesIndexFieldData(index, cache, indexSettings, fieldNames, globalOrdinalBuilder,breakerService, mapper.fieldDataType());
             }
         }
 
