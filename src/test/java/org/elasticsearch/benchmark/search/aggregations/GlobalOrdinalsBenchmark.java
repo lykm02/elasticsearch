@@ -121,7 +121,7 @@ public class GlobalOrdinalsBenchmark {
             BulkRequestBuilder builder = client.prepareBulk();
             for (int i = 0; i < COUNT; i++) {
                 Map<String, Object> fieldValues = new HashMap<>();
-                for (int fieldSuffix = 1; fieldSuffix < FIELD_LIMIT; fieldSuffix <<= 1) {
+                for (int fieldSuffix = 1; fieldSuffix <= FIELD_LIMIT; fieldSuffix <<= 1) {
                     fieldValues.put("field_" + fieldSuffix, sValues[random.nextInt(fieldSuffix)]);
                 }
                 builder.add(
@@ -163,7 +163,7 @@ public class GlobalOrdinalsBenchmark {
             }
 
             int limit = 1 << 22;
-            for (int fieldSuffix = 1; fieldSuffix < limit; fieldSuffix <<= 1) {
+            for (int fieldSuffix = 1; fieldSuffix <= limit; fieldSuffix <<= 1) {
                 String fieldName = "field_" + fieldSuffix;
                 String name = ordinalMappingType + "-" + fieldName;
                 stats.add(terms(name, fieldName, "global_ordinals_direct"));

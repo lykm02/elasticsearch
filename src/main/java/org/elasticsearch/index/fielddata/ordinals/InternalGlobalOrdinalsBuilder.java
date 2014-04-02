@@ -99,7 +99,13 @@ public class InternalGlobalOrdinalsBuilder extends AbstractIndexComponent implem
         breakerService.getBreaker().addWithoutBreaking(memorySizeInBytes);
 
         if (logger.isDebugEnabled()) {
-            logger.debug("Global ordinals loading for {} values, took: {} ms", maxOrd, (System.currentTimeMillis() - startTime));
+            String implName = ordinalMappingBuilder.getClass().getName();
+            logger.debug(
+                    "Loading of global-ordinals[{}] loaded {} values and took: {} ms",
+                    implName,
+                    maxOrd,
+                    (System.currentTimeMillis() - startTime)
+            );
         }
         return new GlobalOrdinalsIndexFieldData(indexFieldData.index(), settings, indexFieldData.getFieldNames(), withOrdinals,
                 globalOrdToFirstSegment, globalOrdToFirstSegmentOrd, segmentOrdToGlobalOrdLookups, memorySizeInBytes
@@ -107,10 +113,6 @@ public class InternalGlobalOrdinalsBuilder extends AbstractIndexComponent implem
     }
 
     private OrdinalMappingSource.Builder resolveEnumBuilder(Settings settings, float acceptableOverheadRatio, int numSegments) {
-        if (true) {
-            return new SlicedArrayOrdinalMappingSource.Builder(numSegments);
-        }
-
         String ordinalMappingType = settings.get("index.ordinal_mapping_type", "compressed");
         if ("compressed".equals(ordinalMappingType)) {
             return new CompressedOrdinalMappingSource.Builder(numSegments, acceptableOverheadRatio);
