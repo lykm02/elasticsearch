@@ -49,6 +49,8 @@ import java.util.List;
  */
 public class InternalGlobalOrdinalsBuilder extends AbstractIndexComponent implements GlobalOrdinalsBuilder {
 
+    public final static String[] ORDINAL_MAPPING_IMPLS = new String[]{"plain", "packed_int", "sliced", "packed_long", "compressed"};
+
     public InternalGlobalOrdinalsBuilder(Index index, @IndexSettings Settings indexSettings) {
         super(index, indexSettings);
     }

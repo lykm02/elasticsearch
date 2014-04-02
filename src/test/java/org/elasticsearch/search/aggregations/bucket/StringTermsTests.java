@@ -22,6 +22,8 @@ import com.google.common.base.Strings;
 import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.action.index.IndexRequestBuilder;
 import org.elasticsearch.action.search.SearchResponse;
+import org.elasticsearch.common.settings.ImmutableSettings;
+import org.elasticsearch.index.fielddata.ordinals.InternalGlobalOrdinalsBuilder;
 import org.elasticsearch.index.query.FilterBuilders;
 import org.elasticsearch.search.aggregations.bucket.filter.Filter;
 import org.elasticsearch.search.aggregations.bucket.histogram.Histogram;
@@ -65,7 +67,10 @@ public class StringTermsTests extends ElasticsearchIntegrationTest {
 
     @Before
     public void init() throws Exception {
-        createIndex("idx");
+        String[] ordinalMappingTypes = InternalGlobalOrdinalsBuilder.ORDINAL_MAPPING_IMPLS;
+        prepareCreate("idx")
+                .setSettings(ImmutableSettings.builder().put("index.ordinal_mapping_type", ordinalMappingTypes[randomInt(ordinalMappingTypes.length - 1)]))
+                .get();
         IndexRequestBuilder[] lowCardBuilders = new IndexRequestBuilder[5]; // TODO randomize the size?
         for (int i = 0; i < lowCardBuilders.length; i++) {
             lowCardBuilders[i] = client().prepareIndex("idx", "type").setSource(jsonBuilder()
