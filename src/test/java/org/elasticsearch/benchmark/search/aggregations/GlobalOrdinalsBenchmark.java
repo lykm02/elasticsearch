@@ -150,7 +150,13 @@ public class GlobalOrdinalsBenchmark {
         System.out.println("--> Number of docs in index: " + COUNT);
 
         List<StatsResult> stats = new ArrayList<>();
-        String[] ordinalMappingTypes = new String[]{"plain", "packed_int", "sliced", "packed_long", "compressed"};
+        for (int fieldSuffix = 1; fieldSuffix <= FIELD_LIMIT; fieldSuffix <<= 1) {
+            String fieldName = "field_" + fieldSuffix;
+            String name = "terms-aggs-no-global-ordinals-" + fieldName;
+            stats.add(terms(name, fieldName, null));
+        }
+
+        String[] ordinalMappingTypes = new String[]{/*"plain", */"packed_int"/*, "sliced", "packed_long"*/, "compressed"};
         for (String ordinalMappingType : ordinalMappingTypes) {
             client.admin().indices().prepareClose(INDEX_NAME).get();
             client.admin().indices().prepareUpdateSettings(INDEX_NAME)
@@ -162,8 +168,7 @@ public class GlobalOrdinalsBenchmark {
                 System.err.println("--> Timed out waiting for cluster health");
             }
 
-            int limit = 1 << 22;
-            for (int fieldSuffix = 1; fieldSuffix <= limit; fieldSuffix <<= 1) {
+            for (int fieldSuffix = 1; fieldSuffix <= FIELD_LIMIT; fieldSuffix <<= 1) {
                 String fieldName = "field_" + fieldSuffix;
                 String name = ordinalMappingType + "-" + fieldName;
                 stats.add(terms(name, fieldName, "global_ordinals_direct"));
