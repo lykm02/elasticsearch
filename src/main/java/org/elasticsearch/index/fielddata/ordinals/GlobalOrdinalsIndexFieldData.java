@@ -42,12 +42,12 @@ public final class GlobalOrdinalsIndexFieldData extends AbstractIndexComponent i
     private final Atomic[] atomicReaders;
     private final long memorySizeInBytes;
 
-    public GlobalOrdinalsIndexFieldData(Index index, Settings settings, FieldMapper.Names fieldNames, AtomicFieldData.WithOrdinals[] segmentAfd, LongValues globalOrdToFirstSegment, LongValues globalOrdToFirstSegmentOrd, OrdinalMappingSource[] segmentOrdToGlobalOrds, long memorySizeInBytes) {
+    public GlobalOrdinalsIndexFieldData(Index index, Settings settings, FieldMapper.Names fieldNames, AtomicFieldData.WithOrdinals[] segmentAfd, LongValues globalOrdToFirstSegment, LongValues globalOrdToFirstSegmentDelta, OrdinalMappingSource[] segmentOrdToGlobalOrds, long memorySizeInBytes) {
         super(index, settings);
         this.fieldNames = fieldNames;
         this.atomicReaders = new Atomic[segmentAfd.length];
         for (int i = 0; i < segmentAfd.length; i++) {
-            atomicReaders[i] = new Atomic(segmentAfd[i], globalOrdToFirstSegment, globalOrdToFirstSegmentOrd, segmentOrdToGlobalOrds[i]);
+            atomicReaders[i] = new Atomic(segmentAfd[i], globalOrdToFirstSegment, globalOrdToFirstSegmentDelta, segmentOrdToGlobalOrds[i]);
         }
         this.memorySizeInBytes = memorySizeInBytes;
     }
@@ -105,13 +105,13 @@ public final class GlobalOrdinalsIndexFieldData extends AbstractIndexComponent i
         private final AtomicFieldData.WithOrdinals afd;
         private final OrdinalMappingSource segmentOrdToGlobalOrdLookup;
         private final LongValues globalOrdToFirstSegment;
-        private final LongValues globalOrdToFirstSegmentOrd;
+        private final LongValues globalOrdToFirstSegmentDelta;
 
-        private Atomic(WithOrdinals afd, LongValues globalOrdToFirstSegment, LongValues globalOrdToFirstSegmentOrd, OrdinalMappingSource segmentOrdToGlobalOrdLookup) {
+        private Atomic(WithOrdinals afd, LongValues globalOrdToFirstSegment, LongValues globalOrdToFirstSegmentDelta, OrdinalMappingSource segmentOrdToGlobalOrdLookup) {
             this.afd = afd;
             this.segmentOrdToGlobalOrdLookup = segmentOrdToGlobalOrdLookup;
             this.globalOrdToFirstSegment = globalOrdToFirstSegment;
-            this.globalOrdToFirstSegmentOrd = globalOrdToFirstSegmentOrd;
+            this.globalOrdToFirstSegmentDelta = globalOrdToFirstSegmentDelta;
         }
 
         @Override
@@ -126,7 +126,7 @@ public final class GlobalOrdinalsIndexFieldData extends AbstractIndexComponent i
 
                 @Override
                 public BytesRef getValueByOrd(long globalOrd) {
-                    final long segmentOrd = globalOrdToFirstSegmentOrd.get(globalOrd);
+                    final long segmentOrd = globalOrd - globalOrdToFirstSegmentDelta.get(globalOrd);
                     readerIndex = (int) globalOrdToFirstSegment.get(globalOrd);
                     if (bytesValuesCache.containsKey(readerIndex)) {
                         return bytesValuesCache.lget().getValueByOrd(segmentOrd);
