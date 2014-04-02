@@ -21,6 +21,7 @@ package org.elasticsearch.index.fielddata.ordinals;
 import com.carrotsearch.hppc.IntObjectOpenHashMap;
 import org.apache.lucene.index.AtomicReaderContext;
 import org.apache.lucene.index.IndexReader;
+import org.apache.lucene.index.TermsEnum;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.LongValues;
 import org.elasticsearch.common.Nullable;
@@ -29,6 +30,7 @@ import org.elasticsearch.index.AbstractIndexComponent;
 import org.elasticsearch.index.Index;
 import org.elasticsearch.index.fielddata.*;
 import org.elasticsearch.index.fielddata.fieldcomparator.SortMode;
+import org.elasticsearch.index.fielddata.plain.AtomicFieldDataWithOrdinalsTermsEnum;
 import org.elasticsearch.index.mapper.FieldMapper;
 
 import static org.elasticsearch.index.fielddata.ordinals.InternalGlobalOrdinalsBuilder.OrdinalMappingSource;
@@ -179,6 +181,11 @@ public final class GlobalOrdinalsIndexFieldData extends AbstractIndexComponent i
         @Override
         public ScriptDocValues getScriptValues() {
             throw new UnsupportedOperationException("Script values not supported on global ordinals");
+        }
+
+        @Override
+        public TermsEnum termsEnum() {
+            return new AtomicFieldDataWithOrdinalsTermsEnum(this);
         }
 
         @Override

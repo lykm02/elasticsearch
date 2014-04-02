@@ -19,6 +19,8 @@
 
 package org.elasticsearch.index.fielddata;
 
+import org.apache.lucene.index.TermsEnum;
+
 /**
  * The thread safe {@link org.apache.lucene.index.AtomicReader} level cache of the data.
  */
@@ -73,6 +75,12 @@ public interface AtomicFieldData<Script extends ScriptDocValues> extends RamUsag
          * @param needsHashes
          */
         BytesValues.WithOrdinals getBytesValues(boolean needsHashes);
+
+        /**
+         * Returns a terms enum to iterate over all the underlying values.
+         */
+        TermsEnum termsEnum();
+
     }
 
     /**

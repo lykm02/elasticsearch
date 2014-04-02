@@ -23,7 +23,10 @@ import com.carrotsearch.hppc.IntArrayList;
 import com.carrotsearch.hppc.cursors.IntCursor;
 import org.apache.lucene.index.AtomicReaderContext;
 import org.apache.lucene.index.IndexReader;
-import org.apache.lucene.util.*;
+import org.apache.lucene.index.TermsEnum;
+import org.apache.lucene.util.BytesRef;
+import org.apache.lucene.util.BytesRefIterator;
+import org.apache.lucene.util.LongsRef;
 import org.apache.lucene.util.packed.AppendingPackedLongBuffer;
 import org.apache.lucene.util.packed.GrowableWriter;
 import org.apache.lucene.util.packed.MonotonicAppendingLongBuffer;
@@ -32,7 +35,6 @@ import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.index.AbstractIndexComponent;
 import org.elasticsearch.index.Index;
 import org.elasticsearch.index.fielddata.AtomicFieldData;
-import org.elasticsearch.index.fielddata.BytesValues;
 import org.elasticsearch.index.fielddata.FieldDataType;
 import org.elasticsearch.index.fielddata.IndexFieldData;
 import org.elasticsearch.index.settings.IndexSettings;
@@ -82,7 +84,7 @@ public class InternalGlobalOrdinalsBuilder extends AbstractIndexComponent implem
             long globalOrdinalDelta = currentGlobalOrdinal - termIterator.firstLocalOrdinal();
             globalOrdToFirstSegmentDelta.add(globalOrdinalDelta);
             for (TermIterator.LeafSource leafSource : termIterator.competitiveLeafs()) {
-                ordinalMappingBuilder.onOrdinal(leafSource.context.ord, leafSource.currentLocalOrd, currentGlobalOrdinal);
+                ordinalMappingBuilder.onOrdinal(leafSource.context.ord, leafSource.tenum.ord(), currentGlobalOrdinal);
             }
         }
 
@@ -412,15 +414,15 @@ public class InternalGlobalOrdinalsBuilder extends AbstractIndexComponent implem
             for (IntCursor cursor : sourceSlots) {
                 LeafSource leafSource = leafSources.get(cursor.value);
                 if (lowest == null) {
-                    lowest = leafSource.currentTerm;
+                    lowest = leafSource.tenum.term();
                     competitiveSlots.add(cursor.value);
                 } else {
-                    int cmp = lowest.compareTo(leafSource.currentTerm);
+                    int cmp = lowest.compareTo(leafSource.tenum.term());
                     if (cmp == 0) {
                         competitiveSlots.add(cursor.value);
                     } else if (cmp > 0) {
                         competitiveSlots.clear();
-                        lowest = leafSource.currentTerm;
+                        lowest = leafSource.tenum.term();
                         competitiveSlots.add(cursor.value);
                     }
                 }
@@ -439,7 +441,7 @@ public class InternalGlobalOrdinalsBuilder extends AbstractIndexComponent implem
         }
 
         List<LeafSource> competitiveLeafs() throws IOException {
-            List<LeafSource> docsEnums = new ArrayList<LeafSource>(competitiveSlots.size());
+            List<LeafSource> docsEnums = new ArrayList<>(competitiveSlots.size());
             for (IntCursor cursor : competitiveSlots) {
                 LeafSource leafSource = leafSources.get(cursor.value);
                 docsEnums.add(leafSource);
@@ -452,32 +454,23 @@ public class InternalGlobalOrdinalsBuilder extends AbstractIndexComponent implem
             return leafSources.get(slot).context.ord;
         }
 
-        long firstLocalOrdinal() {
+        long firstLocalOrdinal() throws IOException {
             int slot = competitiveSlots.get(0);
-            return leafSources.get(slot).currentLocalOrd;
+            return leafSources.get(slot).tenum.ord();
         }
 
         private static class LeafSource {
 
             final AtomicReaderContext context;
-            final BytesValues.WithOrdinals afd;
-            final long localMaxOrd;
-
-            long currentLocalOrd = Ordinals.MISSING_ORDINAL;
-            BytesRef currentTerm;
+            final TermsEnum tenum;
 
             private LeafSource(AtomicReaderContext context, AtomicFieldData.WithOrdinals afd) throws IOException {
                 this.context = context;
-                this.afd = afd.getBytesValues(false);
-                this.localMaxOrd = this.afd.ordinals().getMaxOrd();
+                this.tenum = afd.termsEnum();
             }
 
             BytesRef next() throws IOException {
-                if (++currentLocalOrd < localMaxOrd) {
-                    return currentTerm = afd.getValueByOrd(currentLocalOrd);
-                } else {
-                    return null;
-                }
+                return tenum.next();
             }
 
         }

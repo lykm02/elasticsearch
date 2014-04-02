@@ -67,7 +67,7 @@ public class StringTermsTests extends ElasticsearchIntegrationTest {
     @Before
     public void init() throws Exception {
         prepareCreate("idx")
-                .addMapping("_default_", jsonBuilder().startObject().startObject("type").startObject("_properties")
+                .addMapping("_default_", jsonBuilder().startObject().startObject("_default_").startObject("_properties")
                     .startObject(SINGLE_VALUED_FIELD_NAME)
                         .field("type", "string")
                         .startObject("fielddata")
