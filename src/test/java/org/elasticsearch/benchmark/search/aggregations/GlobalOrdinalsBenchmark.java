@@ -58,6 +58,7 @@ public class GlobalOrdinalsBenchmark {
     private static final int QUERY_WARMUP = 10;
     private static final int QUERY_COUNT = 100;
     private static final int FIELD_LIMIT = 1 << 22;
+    private static final int FIELD_START = 1;
 
     static long COUNT = SizeValue.parseSizeValue("5m").singles();
     static InternalNode node;
@@ -150,13 +151,7 @@ public class GlobalOrdinalsBenchmark {
         System.out.println("--> Number of docs in index: " + COUNT);
 
         List<StatsResult> stats = new ArrayList<>();
-        for (int fieldSuffix = 1; fieldSuffix <= FIELD_LIMIT; fieldSuffix <<= 1) {
-            String fieldName = "field_" + fieldSuffix;
-            String name = "terms-aggs-no-global-ordinals-" + fieldName;
-            stats.add(terms(name, fieldName, null));
-        }
-
-        String[] ordinalMappingTypes = new String[]{/*"plain", */"packed_int"/*, "sliced", "packed_long"*/, "compressed"};
+        String[] ordinalMappingTypes = new String[]{"plain", "packed_int"/*, "sliced", "packed_long"*/, "compressed"};
         for (String ordinalMappingType : ordinalMappingTypes) {
             client.admin().indices().prepareClose(INDEX_NAME).get();
             client.admin().indices().prepareUpdateSettings(INDEX_NAME)
@@ -168,11 +163,17 @@ public class GlobalOrdinalsBenchmark {
                 System.err.println("--> Timed out waiting for cluster health");
             }
 
-            for (int fieldSuffix = 1; fieldSuffix <= FIELD_LIMIT; fieldSuffix <<= 1) {
+            for (int fieldSuffix = FIELD_START; fieldSuffix <= FIELD_LIMIT; fieldSuffix <<= 1) {
                 String fieldName = "field_" + fieldSuffix;
                 String name = ordinalMappingType + "-" + fieldName;
                 stats.add(terms(name, fieldName, "global_ordinals_direct"));
             }
+        }
+
+        for (int fieldSuffix = FIELD_START; fieldSuffix <= FIELD_LIMIT; fieldSuffix <<= 1) {
+            String fieldName = "field_" + fieldSuffix;
+            String name = "terms-aggs-no-global-ordinals-" + fieldName;
+            stats.add(terms(name, fieldName, null));
         }
 
         System.out.println("------------------ SUMMARY ----------------------------------------------");
@@ -197,6 +198,7 @@ public class GlobalOrdinalsBenchmark {
         for (int j = 0; j < QUERY_WARMUP; j++) {
             SearchResponse searchResponse = client.prepareSearch(INDEX_NAME)
                     .setSearchType(SearchType.COUNT)
+                    .setQuery(matchAllQuery())
                     .addAggregation(AggregationBuilders.terms(name).field(field).executionHint(executionHint))
                     .get();
             if (j == 0) {
@@ -214,6 +216,7 @@ public class GlobalOrdinalsBenchmark {
         for (int j = 0; j < QUERY_COUNT; j++) {
             SearchResponse searchResponse = client.prepareSearch(INDEX_NAME)
                     .setSearchType(SearchType.COUNT)
+                    .setQuery(matchAllQuery())
                     .addAggregation(AggregationBuilders.terms(name).field(field).executionHint(executionHint))
                     .get();
             if (searchResponse.getHits().totalHits() != COUNT) {
