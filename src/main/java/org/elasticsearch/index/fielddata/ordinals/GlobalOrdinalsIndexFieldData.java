@@ -23,7 +23,6 @@ import org.apache.lucene.index.AtomicReaderContext;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.LongValues;
-import org.apache.lucene.util.LongsRef;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.index.AbstractIndexComponent;
@@ -31,6 +30,8 @@ import org.elasticsearch.index.Index;
 import org.elasticsearch.index.fielddata.*;
 import org.elasticsearch.index.fielddata.fieldcomparator.SortMode;
 import org.elasticsearch.index.mapper.FieldMapper;
+
+import static org.elasticsearch.index.fielddata.ordinals.InternalGlobalOrdinalsBuilder.OrdinalMappingSource;
 
 /**
  * {@link IndexFieldData} impl based on global ordinals.
@@ -40,15 +41,13 @@ public final class GlobalOrdinalsIndexFieldData extends AbstractIndexComponent i
     private final FieldMapper.Names fieldNames;
     private final Atomic[] atomicReaders;
     private final long memorySizeInBytes;
-    private final long maxGlobalOrdinal;
 
-    public GlobalOrdinalsIndexFieldData(Index index, Settings settings, FieldMapper.Names fieldNames, AtomicFieldData.WithOrdinals[] segmentAfd, LongValues globalOrdToFirstSegment, LongValues globalOrdToFirstSegmentOrd, LongValues[] segmentOrdToGlobalOrds, long memorySizeInBytes, long higestGlobalOrdinal) {
+    public GlobalOrdinalsIndexFieldData(Index index, Settings settings, FieldMapper.Names fieldNames, AtomicFieldData.WithOrdinals[] segmentAfd, LongValues globalOrdToFirstSegment, LongValues globalOrdToFirstSegmentOrd, OrdinalMappingSource[] segmentOrdToGlobalOrds, long memorySizeInBytes) {
         super(index, settings);
         this.fieldNames = fieldNames;
-        this.maxGlobalOrdinal = higestGlobalOrdinal + 1;
         this.atomicReaders = new Atomic[segmentAfd.length];
         for (int i = 0; i < segmentAfd.length; i++) {
-            atomicReaders[i] = new Atomic(segmentAfd[i], globalOrdToFirstSegment, globalOrdToFirstSegmentOrd, segmentOrdToGlobalOrds[i], maxGlobalOrdinal);
+            atomicReaders[i] = new Atomic(segmentAfd[i], globalOrdToFirstSegment, globalOrdToFirstSegmentOrd, segmentOrdToGlobalOrds[i]);
         }
         this.memorySizeInBytes = memorySizeInBytes;
     }
@@ -90,12 +89,10 @@ public final class GlobalOrdinalsIndexFieldData extends AbstractIndexComponent i
 
     @Override
     public void clear() {
-
     }
 
     @Override
     public void clear(IndexReader reader) {
-
     }
 
     @Override
@@ -105,27 +102,24 @@ public final class GlobalOrdinalsIndexFieldData extends AbstractIndexComponent i
 
     private final class Atomic implements AtomicFieldData.WithOrdinals {
 
-        private final long maxOrd;
         private final AtomicFieldData.WithOrdinals afd;
-        private final LongValues segmentOrdToGlobalOrdLookup;
+        private final OrdinalMappingSource segmentOrdToGlobalOrdLookup;
         private final LongValues globalOrdToFirstSegment;
         private final LongValues globalOrdToFirstSegmentOrd;
 
-        private Atomic(WithOrdinals afd, LongValues globalOrdToFirstSegment, LongValues globalOrdToFirstSegmentOrd, LongValues segmentOrdToGlobalOrdLookup, long maxOrd) {
+        private Atomic(WithOrdinals afd, LongValues globalOrdToFirstSegment, LongValues globalOrdToFirstSegmentOrd, OrdinalMappingSource segmentOrdToGlobalOrdLookup) {
             this.afd = afd;
             this.segmentOrdToGlobalOrdLookup = segmentOrdToGlobalOrdLookup;
             this.globalOrdToFirstSegment = globalOrdToFirstSegment;
             this.globalOrdToFirstSegmentOrd = globalOrdToFirstSegmentOrd;
-            this.maxOrd = maxOrd;
         }
 
         @Override
         public BytesValues.WithOrdinals getBytesValues(boolean needsHashes) {
             BytesValues.WithOrdinals values = afd.getBytesValues(false);
-            Ordinals.Docs actual = values.ordinals();
-            Ordinals.Docs wrapper = new GlobalOrdinalsDocs(actual, segmentOrdToGlobalOrdLookup, memorySizeInBytes, maxOrd);
-
-            return new BytesValues.WithOrdinals(wrapper) {
+            Ordinals.Docs segmentOrdinals = values.ordinals();
+            Ordinals.Docs globalOrdinals = segmentOrdToGlobalOrdLookup.globalOrdinals(segmentOrdinals);
+            return new BytesValues.WithOrdinals(globalOrdinals) {
 
                 int readerIndex;
                 final IntObjectOpenHashMap<BytesValues.WithOrdinals> bytesValuesCache = new IntObjectOpenHashMap<>();
@@ -177,7 +171,7 @@ public final class GlobalOrdinalsIndexFieldData extends AbstractIndexComponent i
 
         @Override
         public ScriptDocValues getScriptValues() {
-            throw new UnsupportedOperationException();
+            throw new UnsupportedOperationException("Script values not supported on global ordinals");
         }
 
         @Override
@@ -186,106 +180,4 @@ public final class GlobalOrdinalsIndexFieldData extends AbstractIndexComponent i
 
     }
 
-    private static class GlobalOrdinalsDocs implements Ordinals.Docs {
-
-        protected final LongValues segmentOrdToGlobalOrdLookup;
-        protected final Ordinals.Docs segmentOrdinals;
-        private final long memorySizeInBytes;
-        protected final long maxOrd;
-
-        protected long currentGlobalOrd;
-
-        private GlobalOrdinalsDocs(Ordinals.Docs segmentOrdinals, LongValues segmentOrdToGlobalOrdLookup, long memorySizeInBytes, long maxOrd) {
-            this.segmentOrdinals = segmentOrdinals;
-            this.segmentOrdToGlobalOrdLookup = segmentOrdToGlobalOrdLookup;
-            this.memorySizeInBytes = memorySizeInBytes;
-            this.maxOrd = maxOrd;
-        }
-
-        @Override
-        public Ordinals ordinals() {
-            return new Ordinals() {
-                @Override
-                public long getMemorySizeInBytes() {
-                    return memorySizeInBytes;
-                }
-
-                @Override
-                public boolean isMultiValued() {
-                    return GlobalOrdinalsDocs.this.isMultiValued();
-                }
-
-                @Override
-                public int getNumDocs() {
-                    return GlobalOrdinalsDocs.this.getNumDocs();
-                }
-
-                @Override
-                public long getNumOrds() {
-                    return GlobalOrdinalsDocs.this.getNumOrds();
-                }
-
-                @Override
-                public long getMaxOrd() {
-                    return GlobalOrdinalsDocs.this.getMaxOrd();
-                }
-
-                @Override
-                public Docs ordinals() {
-                    return GlobalOrdinalsDocs.this;
-                }
-            };
-        }
-
-        @Override
-        public int getNumDocs() {
-            return segmentOrdinals.getNumDocs();
-        }
-
-        @Override
-        public long getNumOrds() {
-            return maxOrd - Ordinals.MIN_ORDINAL;
-        }
-
-        @Override
-        public long getMaxOrd() {
-            return maxOrd;
-        }
-
-        @Override
-        public boolean isMultiValued() {
-            return segmentOrdinals.isMultiValued();
-        }
-
-        @Override
-        public long getOrd(int docId) {
-            long segmentOrd = segmentOrdinals.getOrd(docId);
-            return currentGlobalOrd = segmentOrdToGlobalOrdLookup.get(segmentOrd);
-        }
-
-        @Override
-        public LongsRef getOrds(int docId) {
-            LongsRef refs = segmentOrdinals.getOrds(docId);
-            for (int i = refs.offset; i < refs.length; i++) {
-                refs.longs[i] = segmentOrdToGlobalOrdLookup.get(refs.longs[i]);
-            }
-            return refs;
-        }
-
-        @Override
-        public long nextOrd() {
-            long segmentOrd = segmentOrdinals.nextOrd();
-            return currentGlobalOrd = segmentOrdToGlobalOrdLookup.get(segmentOrd);
-        }
-
-        @Override
-        public int setDocument(int docId) {
-            return segmentOrdinals.setDocument(docId);
-        }
-
-        @Override
-        public long currentOrd() {
-            return currentGlobalOrd;
-        }
-    }
 }
