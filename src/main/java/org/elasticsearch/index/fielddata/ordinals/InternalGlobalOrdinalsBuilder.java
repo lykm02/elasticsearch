@@ -30,8 +30,6 @@ import org.apache.lucene.util.packed.MonotonicAppendingLongBuffer;
 import org.apache.lucene.util.packed.PackedInts;
 import org.elasticsearch.ElasticsearchIllegalArgumentException;
 import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.common.util.BigArrays;
-import org.elasticsearch.common.util.LongArray;
 import org.elasticsearch.index.AbstractIndexComponent;
 import org.elasticsearch.index.Index;
 import org.elasticsearch.index.fielddata.AtomicFieldData;
@@ -50,7 +48,7 @@ import java.util.List;
 public class InternalGlobalOrdinalsBuilder extends AbstractIndexComponent implements GlobalOrdinalsBuilder {
 
     public final static String ORDINAL_MAPPING_OPTION_KEY = "index.fielddata.ordinals.ordinal_mapping_type";
-    public final static String[] ORDINAL_MAPPING_IMPLS = new String[]{"plain", "packed_int", "sliced", "packed_long", "compressed", "default"};
+    public final static String[] ORDINAL_MAPPING_IMPLS = new String[]{"plain", "packed_int", "compressed", "default"};
 
     public InternalGlobalOrdinalsBuilder(Index index, @IndexSettings Settings indexSettings) {
         super(index, indexSettings);
@@ -124,10 +122,6 @@ public class InternalGlobalOrdinalsBuilder extends AbstractIndexComponent implem
             return new CompressedOrdinalMappingSource.Builder(numSegments, acceptableOverheadRatio);
         } else if ("plain".equals(ordinalMappingType)) {
             return new PlainArrayOrdinalMappingSource.Builder(numSegments);
-        } else if ("packed_long".equals(ordinalMappingType)) {
-            return new PackedLongOrdinalMappingSource.Builder(numSegments, acceptableOverheadRatio);
-        } else if ("sliced".equals(ordinalMappingType)) {
-            return new SlicedArrayOrdinalMappingSource.Builder(numSegments);
         } else if ("packed_int".equals(ordinalMappingType)) {
             return new PackedIntOrdinalMappingSource.Builder(numSegments, acceptableOverheadRatio);
         } else {
@@ -363,182 +357,6 @@ public class InternalGlobalOrdinalsBuilder extends AbstractIndexComponent implem
             }
         }
 
-    }
-
-    private final static class PackedLongOrdinalMappingSource implements OrdinalMappingSource {
-
-        private final AppendingPackedLongBuffer segmentOrdToGlobalOrdLookup;
-        private final long memorySizeInBytes;
-        private final long maxOrd;
-
-        private PackedLongOrdinalMappingSource(AppendingPackedLongBuffer segmentOrdToGlobalOrdLookup, long memorySizeInBytes, long maxOrd) {
-            this.segmentOrdToGlobalOrdLookup = segmentOrdToGlobalOrdLookup;
-            this.memorySizeInBytes = memorySizeInBytes;
-            this.maxOrd = maxOrd;
-        }
-
-
-        @Override
-        public Ordinals.Docs globalOrdinals(Ordinals.Docs segmentOrdinals) {
-            return new GlobalOrdinalsDocs(segmentOrdinals, memorySizeInBytes, maxOrd, segmentOrdToGlobalOrdLookup);
-        }
-
-        private final static class GlobalOrdinalsDocs extends GlobalOrdinalMapping {
-
-            private final AppendingPackedLongBuffer segmentOrdToGlobalOrdLookup;
-
-            private GlobalOrdinalsDocs(Ordinals.Docs segmentOrdinals, long memorySizeInBytes, long maxOrd, AppendingPackedLongBuffer segmentOrdToGlobalOrdLookup) {
-                super(segmentOrdinals, memorySizeInBytes, maxOrd);
-                this.segmentOrdToGlobalOrdLookup = segmentOrdToGlobalOrdLookup;
-            }
-
-            @Override
-            public long getOrd(int docId) {
-                long segmentOrd = segmentOrdinals.getOrd(docId);
-                return currentGlobalOrd = segmentOrdToGlobalOrdLookup.get(segmentOrd);
-            }
-
-            @Override
-            public LongsRef getOrds(int docId) {
-                LongsRef refs = segmentOrdinals.getOrds(docId);
-                for (int i = refs.offset; i < refs.length; i++) {
-                    refs.longs[i] = segmentOrdToGlobalOrdLookup.get(refs.longs[i]);
-                }
-                return refs;
-            }
-
-            @Override
-            public long nextOrd() {
-                long segmentOrd = segmentOrdinals.nextOrd();
-                return currentGlobalOrd = segmentOrdToGlobalOrdLookup.get(segmentOrd);
-            }
-        }
-
-        private final static class Builder implements OrdinalMappingSource.Builder {
-
-            final AppendingPackedLongBuffer[] segmentOrdToGlobalOrdLookups;
-            long memorySizeInBytesCounter;
-
-            private Builder(int numSegments, float acceptableOverheadRatio) {
-                segmentOrdToGlobalOrdLookups = new AppendingPackedLongBuffer[numSegments];
-                for (int i = 0; i < numSegments; i++) {
-                    segmentOrdToGlobalOrdLookups[i] = new AppendingPackedLongBuffer(acceptableOverheadRatio);
-                    segmentOrdToGlobalOrdLookups[i].add(0);
-                }
-            }
-
-            @Override
-            public void onOrdinal(int readerIndex, long segmentOrdinal, long globalOrdinal) {
-                segmentOrdToGlobalOrdLookups[readerIndex].add(globalOrdinal);
-            }
-
-            @Override
-            public OrdinalMappingSource[] build(long maxOrd) {
-                OrdinalMappingSource[] sources = new OrdinalMappingSource[segmentOrdToGlobalOrdLookups.length];
-                for (int i = 0; i < segmentOrdToGlobalOrdLookups.length; i++) {
-                    AppendingPackedLongBuffer segmentOrdToGlobalOrdLookup = segmentOrdToGlobalOrdLookups[i];
-                    segmentOrdToGlobalOrdLookup.freeze();
-                    long ramUsed = segmentOrdToGlobalOrdLookup.ramBytesUsed();
-                    sources[i] = new PackedLongOrdinalMappingSource(segmentOrdToGlobalOrdLookup, ramUsed, maxOrd);
-                    memorySizeInBytesCounter += ramUsed;
-                }
-                return sources;
-            }
-
-            @Override
-            public long getMemorySizeInBytes() {
-                return memorySizeInBytesCounter;
-            }
-        }
-    }
-
-    private static final class SlicedArrayOrdinalMappingSource implements OrdinalMappingSource {
-
-        private final LongArray segmentOrdToGlobalOrdLookup;
-        private final long memorySizeInBytes;
-        private final long maxOrd;
-
-        private SlicedArrayOrdinalMappingSource(LongArray segmentOrdToGlobalOrdLookup, long memorySizeInBytes, long maxOrd) {
-            this.segmentOrdToGlobalOrdLookup = segmentOrdToGlobalOrdLookup;
-            this.memorySizeInBytes = memorySizeInBytes;
-            this.maxOrd = maxOrd;
-        }
-
-        @Override
-        public Ordinals.Docs globalOrdinals(Ordinals.Docs segmentOrdinals) {
-            return new GlobalOrdinalsDocs(segmentOrdinals, memorySizeInBytes, maxOrd, segmentOrdToGlobalOrdLookup);
-        }
-
-        private final static class GlobalOrdinalsDocs extends GlobalOrdinalMapping {
-
-            private final LongArray segmentOrdToGlobalOrdLookup;
-
-            private GlobalOrdinalsDocs(Ordinals.Docs segmentOrdinals, long memorySizeInBytes, long maxOrd, LongArray segmentOrdToGlobalOrdLookup) {
-                super(segmentOrdinals, memorySizeInBytes, maxOrd);
-                this.segmentOrdToGlobalOrdLookup = segmentOrdToGlobalOrdLookup;
-            }
-
-            @Override
-            public long getOrd(int docId) {
-                long segmentOrd = segmentOrdinals.getOrd(docId);
-                return currentGlobalOrd = segmentOrdToGlobalOrdLookup.get(segmentOrd);
-            }
-
-            @Override
-            public LongsRef getOrds(int docId) {
-                LongsRef refs = segmentOrdinals.getOrds(docId);
-                for (int i = refs.offset; i < refs.length; i++) {
-                    refs.longs[i] = segmentOrdToGlobalOrdLookup.get(refs.longs[i]);
-                }
-                return refs;
-            }
-
-            @Override
-            public long nextOrd() {
-                long segmentOrd = segmentOrdinals.nextOrd();
-                return currentGlobalOrd = segmentOrdToGlobalOrdLookup.get(segmentOrd);
-            }
-        }
-
-        private static final class Builder implements OrdinalMappingSource.Builder {
-
-            final LongArray[] segmentOrdToGlobalOrdLookups;
-            final long[] segmentOrdToGlobalOrdLookupsCounter;
-            long memorySizeInBytesCounter;
-
-            private Builder(int numSegments) {
-                segmentOrdToGlobalOrdLookups = new LongArray[numSegments];
-                segmentOrdToGlobalOrdLookupsCounter = new long[numSegments];
-                for (int i = 0; i < numSegments; i++) {
-                    segmentOrdToGlobalOrdLookups[i] = BigArrays.NON_RECYCLING_INSTANCE.newLongArray(32, false);
-                    segmentOrdToGlobalOrdLookupsCounter[i] = 1;
-                }
-            }
-
-            @Override
-            public void onOrdinal(int readerIndex, long segmentOrdinal, long globalOrdinal) {
-                segmentOrdToGlobalOrdLookups[readerIndex] = BigArrays.NON_RECYCLING_INSTANCE.grow(segmentOrdToGlobalOrdLookups[readerIndex], segmentOrdToGlobalOrdLookupsCounter[readerIndex] + 1);
-                segmentOrdToGlobalOrdLookups[readerIndex].set(segmentOrdToGlobalOrdLookupsCounter[readerIndex]++, globalOrdinal);
-            }
-
-            @Override
-            public OrdinalMappingSource[] build(long maxOrd) {
-                OrdinalMappingSource[] result = new OrdinalMappingSource[segmentOrdToGlobalOrdLookupsCounter.length];
-                for (int i = 0; i < segmentOrdToGlobalOrdLookups.length; i++) {
-                    final LongArray segmentOrdToGlobalOrdLookup = segmentOrdToGlobalOrdLookups[i];
-                    // no access to AbstractBigArray#sizeInBytes()
-                    long ramUsed = (segmentOrdToGlobalOrdLookup.size() * RamUsageEstimator.NUM_BYTES_LONG) + RamUsageEstimator.NUM_BYTES_ARRAY_HEADER;
-                    result[i] = new SlicedArrayOrdinalMappingSource(segmentOrdToGlobalOrdLookup, ramUsed, maxOrd);
-                    memorySizeInBytesCounter += ramUsed;
-                }
-                return result;
-            }
-
-            @Override
-            public long getMemorySizeInBytes() {
-                return memorySizeInBytesCounter;
-            }
-        }
     }
 
     private static final class PlainArrayOrdinalMappingSource implements OrdinalMappingSource {
