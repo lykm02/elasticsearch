@@ -69,7 +69,7 @@ public class StringTermsTests extends ElasticsearchIntegrationTest {
     public void init() throws Exception {
         String[] ordinalMappingTypes = InternalGlobalOrdinalsBuilder.ORDINAL_MAPPING_IMPLS;
         prepareCreate("idx")
-                .setSettings(ImmutableSettings.builder().put("index.ordinal_mapping_type", ordinalMappingTypes[randomInt(ordinalMappingTypes.length - 1)]))
+                .setSettings(ImmutableSettings.builder().put(InternalGlobalOrdinalsBuilder.ORDINAL_MAPPING_OPTION_KEY, ordinalMappingTypes[randomInt(ordinalMappingTypes.length - 1)]))
                 .get();
         IndexRequestBuilder[] lowCardBuilders = new IndexRequestBuilder[5]; // TODO randomize the size?
         for (int i = 0; i < lowCardBuilders.length; i++) {

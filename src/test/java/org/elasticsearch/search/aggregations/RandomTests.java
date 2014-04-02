@@ -151,7 +151,7 @@ public class RandomTests extends ElasticsearchIntegrationTest {
         final IntOpenHashSet valuesSet = new IntOpenHashSet();
         cluster().wipeIndices("idx");
         prepareCreate("idx")
-              .setSettings(ImmutableSettings.builder().put("index.ordinal_mapping_type", ordinalMappingTypes[randomInt(ordinalMappingTypes.length - 1)]))
+              .setSettings(ImmutableSettings.builder().put(InternalGlobalOrdinalsBuilder.ORDINAL_MAPPING_OPTION_KEY, ordinalMappingTypes[randomInt(ordinalMappingTypes.length - 1)]))
               .addMapping("type", jsonBuilder().startObject()
                       .startObject("type")
                       .startObject("properties")

@@ -34,6 +34,7 @@ import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.common.unit.SizeValue;
 import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.discovery.Discovery;
+import org.elasticsearch.index.fielddata.ordinals.InternalGlobalOrdinalsBuilder;
 import org.elasticsearch.indices.IndexAlreadyExistsException;
 import org.elasticsearch.node.internal.InternalNode;
 import org.elasticsearch.search.aggregations.AggregationBuilders;
@@ -155,7 +156,7 @@ public class GlobalOrdinalsBenchmark {
         for (String ordinalMappingType : ordinalMappingTypes) {
             client.admin().indices().prepareClose(INDEX_NAME).get();
             client.admin().indices().prepareUpdateSettings(INDEX_NAME)
-                    .setSettings(ImmutableSettings.builder().put("ordinal_mapping_type", ordinalMappingType))
+                    .setSettings(ImmutableSettings.builder().put(InternalGlobalOrdinalsBuilder.ORDINAL_MAPPING_OPTION_KEY, ordinalMappingType))
                     .get();
             client.admin().indices().prepareOpen(INDEX_NAME).get();
             ClusterHealthResponse clusterHealthResponse = client.admin().cluster().prepareHealth().setWaitForGreenStatus().setTimeout("10m").execute().actionGet();
