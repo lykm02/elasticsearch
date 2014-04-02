@@ -176,9 +176,9 @@ public class GlobalOrdinalsBenchmark {
         }
 
         System.out.println("------------------ SUMMARY ----------------------------------------------");
-        System.out.format(Locale.ENGLISH, "%35s%10s%10s%15s\n", "name", "took", "millis", "fieldata size");
+        System.out.format(Locale.ENGLISH, "%40s%10s%10s%15s\n", "name", "took", "millis", "fieldata size");
         for (StatsResult stat : stats) {
-            System.out.format(Locale.ENGLISH, "%35s%10s%10d%15s\n", stat.name, TimeValue.timeValueMillis(stat.took), (stat.took / QUERY_COUNT), stat.fieldDataMemoryUsed);
+            System.out.format(Locale.ENGLISH, "%40s%10s%10d%15s\n", stat.name, TimeValue.timeValueMillis(stat.took), (stat.took / QUERY_COUNT), stat.fieldDataMemoryUsed);
         }
         System.out.println("------------------ SUMMARY ----------------------------------------------");
 
