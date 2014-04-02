@@ -68,7 +68,7 @@ public class TermsAggregatorFactory extends ValueSourceAggregatorFactory {
             Aggregator create(String name, AggregatorFactories factories, ValuesSource valuesSource, long estimatedBucketCount,
                               InternalOrder order, int requiredSize, int shardSize, long minDocCount, IncludeExclude includeExclude,
                               AggregationContext aggregationContext, Aggregator parent) {
-                return GLOBAL_ORDINALS_HASH.create(
+                return GLOBAL_ORDINALS_DIRECT.create(
                         name, factories, valuesSource, estimatedBucketCount, order, requiredSize, shardSize, minDocCount,
                         includeExclude,aggregationContext, parent
                 );
