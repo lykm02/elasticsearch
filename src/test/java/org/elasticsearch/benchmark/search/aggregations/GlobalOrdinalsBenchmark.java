@@ -57,9 +57,9 @@ public class GlobalOrdinalsBenchmark {
     private static final String INDEX_NAME = "index";
     private static final String TYPE_NAME = "type";
     private static final int QUERY_WARMUP = 10;
-    private static final int QUERY_COUNT = 100;
-    private static final int FIELD_LIMIT = 1 << 22;
-    private static final int FIELD_START = 1;
+    private static final int QUERY_COUNT = 200;
+    private static final int FIELD_LIMIT = 256;//1 << 22;
+    private static final int FIELD_START = 1;//1;
 
     static long COUNT = SizeValue.parseSizeValue("5m").singles();
     static InternalNode node;
@@ -152,7 +152,7 @@ public class GlobalOrdinalsBenchmark {
         System.out.println("--> Number of docs in index: " + COUNT);
 
         List<StatsResult> stats = new ArrayList<>();
-        String[] ordinalMappingTypes = new String[]{"plain", "packed_int"/*, "sliced", "packed_long"*/, "compressed"};
+        String[] ordinalMappingTypes = new String[]{"default", "plain"/*, "packed_int", "sliced", "packed_long", "compressed"*/};
         for (String ordinalMappingType : ordinalMappingTypes) {
             client.admin().indices().prepareClose(INDEX_NAME).get();
             client.admin().indices().prepareUpdateSettings(INDEX_NAME)
